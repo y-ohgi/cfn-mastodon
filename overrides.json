@@ -1,0 +1,8 @@
+{
+  "containerOverrides": [
+    {
+      "name": "web",
+      "command": ["bash", "-c", "./bin/rake -T"]
+    }
+  ]
+}
