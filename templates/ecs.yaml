@@ -1,0 +1,17 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  StackName:
+    Type: 'String'
+
+Resources:
+  # ECS Cluster
+  EcsCluster:
+    Type: 'AWS::ECS::Cluster'
+    Properties:
+      ClusterName: !Sub '${StackName}-cluster'
+
+Outputs:
+  EcsCluster:
+    Value: !Ref EcsCluster
+    Export:
+      Name: !Sub '${StackName}-EcsCluster'

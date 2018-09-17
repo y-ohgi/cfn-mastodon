@@ -1,0 +1,427 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  StackName:
+    Type: 'String'
+
+  #==================================================
+  # ECS Task Environment Variables
+  LocalDomain:
+    Type: 'String'
+
+  DbName:
+    Type: 'String'
+    Default: 'mastodon'
+  DbUser:
+    Type: 'String'
+    Default: 'mastodon'
+  DbPass:
+    NoEcho: true
+    Type: 'AWS::SSM::Parameter::Value<String>'
+
+  OtpSecret:
+    NoEcho: true
+    Type: 'String'
+  SecretKeyBase:
+    NoEcho: true
+    Type: 'String'
+
+  VapidPrivateKey:
+    NoEcho: true
+    Type: 'String'
+  VapidPublicKey:
+    NoEcho: true
+    Type: 'String'
+
+  SmtpServer:
+    Type: 'String'
+  SmtpFromAddress:
+    Type: 'String'
+  SmtpLogin: #XXX: IAM User Access Key
+    Type: 'String'
+  SmtpPassword: #XXX: IAM User Secret Key
+    NoEcho: true
+    Type: 'String'
+
+Resources:
+  ##################################################
+  # ALB
+  ##################################################
+  AlbTargetGroupWeb:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      Name: !Sub 'tg-${AWS::StackName}-web'
+      VpcId:
+        Fn::ImportValue: !Sub '${StackName}-VpcId'
+      # HealthCheck
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: '/about'
+      HealthCheckPort: 3000
+      HealthCheckProtocol: 'HTTP'
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: '200-399'
+      Port: 3000
+      Protocol: 'HTTP'
+      TargetType: 'ip'
+
+  AlbTargetGroupStream:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      Name: !Sub 'tg-${AWS::StackName}-stream'
+      VpcId:
+        Fn::ImportValue: !Sub '${StackName}-VpcId'
+      # HealthCheck
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: '/api/v1/streaming'
+      HealthCheckPort: 4000
+      HealthCheckProtocol: 'HTTP'
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: '200-499'
+      Port: 4000
+      Protocol: 'HTTP'
+      TargetType: 'ip'
+
+  AlbListenerWeb:
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      Actions:
+        - Type: 'forward'
+          TargetGroupArn: !Ref AlbTargetGroupWeb
+      Conditions:
+        - Field: 'path-pattern'
+          Values: ['*']
+      ListenerArn:
+        Fn::ImportValue: !Sub '${StackName}-AlbListenerHttps'
+      Priority: 100
+
+  AlbListenerStream:
+    Type: 'AWS::ElasticLoadBalancingV2::ListenerRule'
+    Properties:
+      Actions:
+        - Type: 'forward'
+          TargetGroupArn: !Ref AlbTargetGroupStream
+      Conditions:
+        - Field: 'path-pattern'
+          Values: ['/api/v1/streaming*']
+      ListenerArn:
+        Fn::ImportValue: !Sub '${StackName}-AlbListenerHttps'
+      Priority: 10
+
+  ##################################################
+  # ECS
+  ##################################################
+  # S3
+  S3Bucket:
+    Type: 'AWS::S3::Bucket'
+
+  # IAM
+  EcsTaskIam:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument: |
+        {
+          "Statement": [{
+            "Effect": "Allow",
+            "Action": "sts:AssumeRole",
+            "Principal": {
+              "Service": "ecs-tasks.amazonaws.com"
+            }
+          }]
+        }
+      Policies:
+        - PolicyName: !Sub 'S3Access'
+          PolicyDocument: !Sub |
+            {
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "s3:*",
+                  "Resource": "arn:aws:s3:::${S3Bucket}*"
+                }
+              ]
+            }
+
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+
+  # Log Group
+  EcsTaskLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties: 
+      LogGroupName: !Sub '/${StackName}/ecs/mastodon'
+      RetentionInDays: 7
+
+  # Ecs Task Definition
+  EcsTaskDefinitionWeb:
+    Type: 'AWS::ECS::TaskDefinition'
+    Properties: 
+      Cpu: '512'
+      Family: !Sub '${StackName}-web'
+      Memory: '1GB'
+      NetworkMode: 'awsvpc'
+      RequiresCompatibilities: ['FARGATE']
+      ExecutionRoleArn: !Ref EcsTaskIam
+      TaskRoleArn: !Ref EcsTaskIam
+      ContainerDefinitions:
+        # Web Container
+        - Name: 'web'
+          Image: 'gargron/mastodon'
+          MemoryReservation: 512
+          Essential: true
+          Command:
+            - 'bash'
+            - '-c'
+            - 'rm -f /mastodon/tmp/pids/server.pid; bundle exec rails db:migrate; bundle exec rails s -p 3000 -b "0.0.0.0"'
+          PortMappings:
+          - HostPort: 3000
+            Protocol: 'tcp'
+            ContainerPort: 3000
+          LogConfiguration:
+            LogDriver: 'awslogs'
+            Options:
+              awslogs-group: !Sub '/${StackName}/ecs/mastodon'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: 'web'
+          Environment:
+            # Domain
+            - Name: 'LOCAL_DOMAIN'
+              Value: !Ref LocalDomain
+            # Database
+            - Name: 'DB_HOST'
+              Value:
+                Fn::ImportValue: !Sub '${StackName}-PostgresAddress'
+            - Name: 'DB_PORT'
+              Value:
+                Fn::ImportValue: !Sub '${StackName}-PostgresPort'
+            - Name: 'DB_NAME'
+              Value: !Ref DbName
+            - Name: 'DB_USER'
+              Value: !Ref DbUser
+            - Name: 'DB_PASS'
+              Value: !Ref DbPass
+            # Redis
+            - Name: 'REDIS_HOST'
+              Value:
+                Fn::ImportValue: !Sub '${StackName}-RedisAddress'
+            - Name: 'REDIS_PORT'
+              Value:
+                Fn::ImportValue: !Sub '${StackName}-RedisPort'
+            # S3
+            - Name: 'S3_BUCKET'
+              Value: !GetAtt S3Bucket.DomainName  # !Ref S3_BUCKET
+            - Name: 'S3_REGION'
+              Value: !Ref AWS::Region
+            # Secrets
+            - Name: 'OTP_SECRET'
+              Value: !Ref OtpSecret
+            - Name: 'SECRET_KEY_BASE'
+              Value: !Ref SecretKeyBase
+            - Name: 'VAPID_PRIVATE_KEY'
+              Value: !Ref VapidPrivateKey
+            - Name: 'VAPID_PUBLIC_KEY'
+              Value: !Ref VapidPublicKey
+            # SES
+            - Name: 'SMTP_PORT'
+              Value: 587
+            - Name: 'SMTP_SERVER'
+              Value: !Ref SmtpServer
+            - Name: 'SMTP_FROM_ADDRESS'
+              Value: !Ref SmtpFromAddress
+            - Name: 'SMTP_LOGIN'
+              Value: !Ref SmtpLogin
+            - Name: 'SMTP_PASSWORD'
+              Value: !Ref SmtpPassword
+
+  EcsTaskDefinitionStream:
+    Type: 'AWS::ECS::TaskDefinition'
+    Properties: 
+      Cpu: '256'
+      Family: !Sub '${StackName}-stream'
+      Memory: '0.5GB'
+      NetworkMode: 'awsvpc'
+      RequiresCompatibilities: ['FARGATE']
+      ExecutionRoleArn: !Ref EcsTaskIam
+      TaskRoleArn: !Ref EcsTaskIam
+      ContainerDefinitions:
+        # Stream
+        - Name: 'stream'
+          Image: 'gargron/mastodon'
+          MemoryReservation: 512
+          Essential: true
+          Command:
+            - 'yarn'
+            - 'start'
+          PortMappings:
+          - HostPort: 4000
+            Protocol: 'tcp'
+            ContainerPort: 4000
+          LogConfiguration:
+            LogDriver: 'awslogs'
+            Options:
+              awslogs-group: !Sub '/${StackName}/ecs/mastodon'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: 'stream'
+          Environment:
+            # Database
+            - Name: 'DB_HOST'
+              Value:
+                Fn::ImportValue: !Sub '${StackName}-PostgresAddress'
+            - Name: 'DB_PORT'
+              Value:
+                Fn::ImportValue: !Sub '${StackName}-PostgresPort'
+            - Name: 'DB_NAME'
+              Value: !Ref DbName
+            - Name: 'DB_USER'
+              Value: !Ref DbUser
+            - Name: 'DB_PASS'
+              Value: !Ref DbPass
+            # Redis
+            - Name: 'REDIS_HOST'
+              Value:
+                Fn::ImportValue: !Sub '${StackName}-RedisAddress'
+            - Name: 'REDIS_PORT'
+              Value:
+                Fn::ImportValue: !Sub '${StackName}-RedisPort'
+
+  EcsTaskDefinitionSidekiq:
+    Type: 'AWS::ECS::TaskDefinition'
+    Properties: 
+      Cpu: '256'
+      Family: !Sub '${StackName}-sidekiq'
+      Memory: '0.5GB'
+      NetworkMode: 'awsvpc'
+      RequiresCompatibilities: ['FARGATE']
+      ExecutionRoleArn: !Ref EcsTaskIam
+      TaskRoleArn: !Ref EcsTaskIam
+      ContainerDefinitions:
+        # Sidekiq
+        - Name: 'sidekiq'
+          Image: 'gargron/mastodon'
+          MemoryReservation: 512
+          Essential: true
+          Command:
+            - 'bundle'
+            - 'exec'
+            - 'sidekiq'
+            - '-q'
+            - 'default'
+            - '-q'
+            - 'push'
+            - '-q'
+            - 'mailers'
+            - '-q'
+            - 'pull'
+          LogConfiguration:
+            LogDriver: 'awslogs'
+            Options:
+              awslogs-group: !Sub '/${StackName}/ecs/mastodon'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: 'sidekiq'
+          Environment:
+            # Domain
+            - Name: 'LOCAL_DOMAIN'
+              Value: !Ref LocalDomain
+            # Database
+            - Name: 'DB_HOST'
+              Value:
+                Fn::ImportValue: !Sub '${StackName}-PostgresAddress'
+            - Name: 'DB_PORT'
+              Value:
+                Fn::ImportValue: !Sub '${StackName}-PostgresPort'
+            - Name: 'DB_NAME'
+              Value: !Ref DbName
+            - Name: 'DB_USER'
+              Value: !Ref DbUser
+            - Name: 'DB_PASS'
+              Value: !Ref DbPass
+            # Redis
+            - Name: 'REDIS_HOST'
+              Value:
+                Fn::ImportValue: !Sub '${StackName}-RedisAddress'
+            - Name: 'REDIS_PORT'
+              Value:
+                Fn::ImportValue: !Sub '${StackName}-RedisPort'
+            # S3
+            - Name: 'S3_BUCKET'
+              Value: !GetAtt S3Bucket.DomainName  # !Ref S3_BUCKET
+            - Name: 'S3_REGION'
+              Value: !Ref AWS::Region
+            # Secrets
+            - Name: 'OTP_SECRET'
+              Value: !Ref OtpSecret
+            - Name: 'SECRET_KEY_BASE'
+              Value: !Ref SecretKeyBase
+            - Name: 'VAPID_PRIVATE_KEY'
+              Value: !Ref VapidPrivateKey
+            - Name: 'VAPID_PUBLIC_KEY'
+              Value: !Ref VapidPublicKey
+            # SES
+            - Name: 'SMTP_PORT'
+              Value: 587
+            - Name: 'SMTP_SERVER'
+              Value: !Ref SmtpServer
+            - Name: 'SMTP_FROM_ADDRESS'
+              Value: !Ref SmtpFromAddress
+            - Name: 'SMTP_LOGIN'
+              Value: !Ref SmtpLogin
+            - Name: 'SMTP_PASSWORD'
+              Value: !Ref SmtpPassword
+            # Number of streaming api server.
+            - Name: 'STREAMING_CLUSTER_NUM'
+              Value: '1'
+
+  # Ecs Service
+  EcsServiceWeb:
+    Type: 'AWS::ECS::Service'
+    Properties:
+      TaskDefinition: !Ref EcsTaskDefinitionWeb
+      DesiredCount: 1
+      HealthCheckGracePeriodSeconds: 60
+      LoadBalancers:
+        - TargetGroupArn: !Ref AlbTargetGroupWeb
+          ContainerPort: 3000
+          ContainerName: 'web'
+      LaunchType: 'FARGATE'
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - Fn::ImportValue: !Sub '${StackName}-SecurityGroupEcsServiceMastodon'
+          Subnets: { 'Fn::Split': [',', {'Fn::ImportValue': !Sub '${StackName}-PrivateSubnetIds'} ]}
+      Cluster:
+        Fn::ImportValue: !Sub '${StackName}-EcsCluster'
+
+  EcsServiceStream:
+    Type: 'AWS::ECS::Service'
+    Properties:
+      TaskDefinition: !Ref EcsTaskDefinitionStream
+      DesiredCount: 1
+      HealthCheckGracePeriodSeconds: 30
+      LoadBalancers:
+        - TargetGroupArn: !Ref AlbTargetGroupStream
+          ContainerPort: 4000
+          ContainerName: 'stream'
+      LaunchType: 'FARGATE'
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - Fn::ImportValue: !Sub '${StackName}-SecurityGroupEcsServiceMastodon'
+          Subnets: { 'Fn::Split': [',', {'Fn::ImportValue': !Sub '${StackName}-PrivateSubnetIds'} ]}
+      Cluster:
+        Fn::ImportValue: !Sub '${StackName}-EcsCluster'
+
+  EcsServiceSidekiq:
+    Type: 'AWS::ECS::Service'
+    Properties:
+      TaskDefinition: !Ref EcsTaskDefinitionSidekiq
+      DesiredCount: 1
+      LaunchType: 'FARGATE'
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: { 'Fn::Split': [',', {'Fn::ImportValue': !Sub '${StackName}-PrivateSubnetIds'} ]}
+      Cluster:
+        Fn::ImportValue: !Sub '${StackName}-EcsCluster'
