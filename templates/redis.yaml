@@ -1,0 +1,36 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  StackName:
+    Type: 'String'
+
+Resources:
+  ElastiCacheSubnetGroup:
+    Type: 'AWS::ElastiCache::SubnetGroup'
+    Properties:
+      Description: !Sub '${AWS::StackName} subnet group'
+      SubnetIds: { 'Fn::Split': [',', {'Fn::ImportValue': !Sub '${StackName}-PrivateSubnetIds'} ]}
+
+  ElastiCacheCluster:
+    Type: 'AWS::ElastiCache::CacheCluster'
+    Properties:
+      AutoMinorVersionUpgrade: true
+      CacheNodeType: 'cache.t2.micro'
+      CacheSubnetGroupName: !Ref ElastiCacheSubnetGroup
+      CacheParameterGroupName: 'default.redis4.0'
+      Engine: 'redis'
+      EngineVersion: '4.0'
+      NumCacheNodes: 1
+      Port: 6379
+      VpcSecurityGroupIds:
+        - Fn::ImportValue: !Sub '${StackName}-SecurityGroupRedis'
+
+Outputs:
+  RedisAddress:
+    Value: !GetAtt ElastiCacheCluster.RedisEndpoint.Address
+    Export:
+      Name: !Sub '${StackName}-RedisAddress'
+
+  RedisPort:
+    Value: !GetAtt ElastiCacheCluster.RedisEndpoint.Port
+    Export:
+      Name: !Sub '${StackName}-RedisPort'
