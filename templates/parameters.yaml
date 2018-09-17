@@ -1,0 +1,12 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  StackName:
+    Type: 'String'
+
+Resources:
+  DBPassword:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Type: 'String'
+      Name: !Sub '/${StackName}/db/password'
+      Value: 'mypassword'
