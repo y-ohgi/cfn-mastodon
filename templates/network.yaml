@@ -1,0 +1,279 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Managin network related components. e.g. VPC, Subnet, RouteTable, GW.'
+Parameters:
+  StackName:
+    Type: 'String'
+
+Resources:
+  ##################################################
+  # VPC
+  ##################################################
+  Vpc:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: '10.0.0.0/16'
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'vpc-${StackName}'
+
+  ##################################################
+  # VPC FlowLog
+  ##################################################
+  VpcFlowlogIam:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument: |
+        {
+          "Statement": [{
+            "Effect": "Allow",
+            "Action": "sts:AssumeRole",
+            "Principal": {
+              "Service": "vpc-flow-logs.amazonaws.com"
+            }
+          }]
+        }
+      Policies:
+        - PolicyName: !Sub '${StackName}-vpcflowlog'
+          PolicyDocument: |
+            {
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents",
+                    "logs:DescribeLogGroups",
+                    "logs:DescribeLogStreams"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+
+  VpcFlowlog:
+    DependsOn: VpcFlowlogLogGroup
+    Type: 'AWS::EC2::FlowLog'
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt VpcFlowlogIam.Arn
+      LogGroupName: !Sub '/${StackName}/vpc/flow'
+      ResourceId: !Ref Vpc
+      ResourceType: 'VPC'
+      TrafficType: 'ALL'
+
+  VpcFlowlogLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties: 
+      LogGroupName: !Sub '/${StackName}/vpc/flow'
+      RetentionInDays: 30
+
+  ##################################################
+  # Public Network
+  ##################################################
+  # Subnet
+  SubnetPublic0:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: '10.0.0.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'sb-${StackName}-public0'
+
+  SubnetPublic1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: '10.0.1.0/24'
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'sb-${StackName}-public1'
+
+  SubnetPublic2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: '10.0.2.0/24'
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'sb-${StackName}-public2'
+
+  # Route Table
+  RouteTablePublic:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'rtb-${StackName}-public'
+
+  # Assign subnet to route table
+  AssignSubnetPublic0ToRouteTablePublic:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref SubnetPublic0
+
+  AssignSubnetPublic1ToRouteTablePublic:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref SubnetPublic1
+
+  AssignSubnetPublic2ToRouteTablePublic:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref SubnetPublic2
+
+  # Internet Gateway
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'igw-${StackName}'
+  InternetGatewayAttach:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # Attache Internet Gateway
+  RouteTablePublicAttachIGW:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      RouteTableId: !Ref RouteTablePublic
+      GatewayId: !Ref InternetGateway
+
+  ##################################################
+  # Private Network
+  ##################################################
+  # Subnet
+  SubnetPrivate0:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: '10.0.10.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'sb-${StackName}-private0'
+
+  SubnetPrivate1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: '10.0.11.0/24'
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'sb-${StackName}-private1'
+
+  SubnetPrivate2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: '10.0.12.0/24'
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'sb-${StackName}-private2'
+
+  # Route Table
+  RouteTablePrivate0:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'rtb-${StackName}-private0'
+
+  RouteTablePrivate1:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'rtb-${StackName}-private1'
+
+  RouteTablePrivate2:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'rtb-${StackName}-private2'
+
+  # Assign subnet to route table
+  AssignSubnetPrivate0ToRouteTablePrivate0:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTablePrivate0
+      SubnetId: !Ref SubnetPrivate0
+
+  AssignSubnetPrivate1ToRouteTablePrivate1:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTablePrivate1
+      SubnetId: !Ref SubnetPrivate1
+
+  AssignSubnetPrivate2ToRouteTablePrivate2:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTablePrivate2
+      SubnetId: !Ref SubnetPrivate2
+
+  # Nat Gateway
+  #   MEMO: AZ障害に耐えるだけの可用性は不要なため、1AZのみ用意
+  EIPPublic0:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: 'vpc'
+  NatGatewayPublic0:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt EIPPublic0.AllocationId
+      SubnetId: !Ref SubnetPublic0
+      Tags:
+      - Key: 'Name'
+        Value: !Sub 'ngw-${StackName}-public0'
+
+  # Mount Nat Gateway
+  MountNatGatewayToRouteTablePrivate0:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref RouteTablePrivate0
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGatewayPublic0
+
+  MountNatGatewayToRouteTablePrivate1:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref RouteTablePrivate1
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGatewayPublic0
+
+  MountNatGatewayToRouteTablePrivate2:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref RouteTablePrivate2
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGatewayPublic0
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub '${StackName}-VpcId'
+
+  VpcCidr:
+    Value: !GetAtt Vpc.CidrBlock
+    Export:
+      Name: !Sub '${StackName}-VpcCidr'
