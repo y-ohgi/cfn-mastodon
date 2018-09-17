@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  StackName:
+    Type: 'String'
+
+  AcmArn:
+    Type: 'String'
+
+Resources:
+  #============================================================
+  # Alb
+  #============================================================
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: 'application'
+      Name: !Sub 'alb-${StackName}'
+      IpAddressType: 'ipv4'
+      Scheme: 'internet-facing'
+      Subnets: { 'Fn::Split': [',', {'Fn::ImportValue': !Sub '${StackName}-PublicSubnetIds'} ]}
+      SecurityGroups:
+        - Fn::ImportValue: !Sub '${StackName}-SecurityGroupAlb'
+
+  #XXX: ListenerのDefaultActionsがステータスコードに対応するまで、一時的に何も返さないTargetGroupを用意。
+  #      理由としてはECS Serviceへ設定するTargetGroupはAlbへ紐付いてる必要があり、
+  #      2つを1対1で管理するにはECS Serviceを記述するテンプレートでTargetGroupの設定を管理する必要があるため。
+  DefaultTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      Name: !Sub 'tg-${StackName}-DefaultTargetGroup'
+      VpcId:
+        Fn::ImportValue: !Sub '${StackName}-VpcId'
+      Port: 80
+      Protocol: 'HTTP'
+
+  #XXX: ListenerのDefaultActionsがステータスコードに対応したときにHSTSを行うよう修正
+  #TODO: 手動でListenerにHSTSの設定を行う。
+  AlbListenerHttp:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: 'forward'
+          TargetGroupArn: !Ref DefaultTargetGroup
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: 'HTTP'
+
+  AlbListenerHttps:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      Certificates:
+        - CertificateArn: !Ref AcmArn
+      DefaultActions:
+        - Type: 'forward'
+          TargetGroupArn: !Ref DefaultTargetGroup
+      LoadBalancerArn: !Ref Alb
+      Port: 443
+      Protocol: 'HTTPS'
+
+Outputs:
+  AlbArn:
+    Value: !Ref Alb
+    Export:
+      Name: !Sub '${StackName}-AlbArn'
+
+  AlbListenerHttps:
+    Value: !Ref AlbListenerHttps
+    Export:
+      Name: !Sub '${StackName}-AlbListenerHttps'
