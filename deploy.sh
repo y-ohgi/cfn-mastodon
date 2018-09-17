@@ -8,11 +8,11 @@ cat <<EOL
     --capabilities CAPABILITY_NAMED_IAM \\
     --stack-name ${STACK_NAME}-${STACK_ROLE} \\
     --template-file ./templates/${STACK_ROLE}.yaml \\
-    --parameter-overrides StackName=${STACK_NAME}
+    --parameter-overrides StackName=${STACK_NAME} $(echo ${@:2:($#-1)})
 EOL
 
 aws cloudformation deploy \
     --capabilities CAPABILITY_NAMED_IAM \
     --stack-name ${STACK_NAME}-${STACK_ROLE} \
     --template-file ./templates/${STACK_ROLE}.yaml \
-    --parameter-overrides StackName=${STACK_NAME}
+    --parameter-overrides StackName=${STACK_NAME} $(echo ${@:2:($#-1)})
