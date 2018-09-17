@@ -277,3 +277,21 @@ Outputs:
     Value: !GetAtt Vpc.CidrBlock
     Export:
       Name: !Sub '${StackName}-VpcCidr'
+      
+  PublicSubnetIds:
+    Value: !Join
+      - ','
+      - - !Ref SubnetPublic0
+        - !Ref SubnetPublic1
+        - !Ref SubnetPublic2
+    Export:
+      Name: !Sub '${StackName}-PublicSubnetIds'
+
+  PrivateSubnetIds:
+    Value: !Join
+      - ','
+      - - !Ref SubnetPrivate0
+        - !Ref SubnetPrivate1
+        - !Ref SubnetPrivate2
+    Export:
+      Name: !Sub '${StackName}-PrivateSubnetIds'
