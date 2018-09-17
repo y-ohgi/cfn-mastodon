@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  StackName:
+    Type: 'String'
+
+Resources:
+  SecurityGroupAlb:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: !Sub 'sg ${StackName} alb'
+      VpcId:
+        Fn::ImportValue: !Sub '${StackName}-VpcId'
+      SecurityGroupIngress:
+        - CidrIp: '0.0.0.0/0'
+          IpProtocol: 'tcp'
+          FromPort: 443
+          ToPort: 443
+        - CidrIp: '0.0.0.0/0'
+          IpProtocol: 'tcp'
+          FromPort: 80
+          ToPort: 80
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'sg-${StackName}-alb'
+
+  SecurityGroupRedis:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: !Sub 'sg ${StackName} redis'
+      VpcId:
+        Fn::ImportValue: !Sub '${StackName}-VpcId'
+      SecurityGroupIngress:
+        - CidrIp:
+            Fn::ImportValue: !Sub '${StackName}-VpcCidr'
+          IpProtocol: 'tcp'
+          FromPort: 6379
+          ToPort: 6379
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'sg-${StackName}-redis'
+
+  SecurityGroupPostgres:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: !Sub 'sg ${StackName} postgres'
+      VpcId: 
+        Fn::ImportValue: !Sub '${StackName}-VpcId'
+      SecurityGroupIngress:
+        - CidrIp:
+            Fn::ImportValue: !Sub '${StackName}-VpcCidr'
+          IpProtocol: 'tcp'
+          FromPort: 5432
+          ToPort: 5432
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'sg-${StackName}-postgres'
+
+  SecurityGroupEcsServiceMastodon:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: !Sub 'sg ${StackName} ecs mastodon service'
+      VpcId: 
+        Fn::ImportValue: !Sub '${StackName}-VpcId'
+      SecurityGroupIngress:
+        - CidrIp:
+            Fn::ImportValue: !Sub '${StackName}-VpcCidr'
+          IpProtocol: 'tcp'
+          FromPort: 3000
+          ToPort: 3000
+        - CidrIp:
+            Fn::ImportValue: !Sub '${StackName}-VpcCidr'
+          IpProtocol: 'tcp'
+          FromPort: 4000
+          ToPort: 4000
+      Tags:
+        - Key: 'Name'
+          Value: !Sub 'sg-${StackName}-ecs-mastodon'
+
+Outputs:
+  SecurityGroupAlb:
+    Value: !Ref SecurityGroupAlb
+    Export:
+      Name: !Sub '${StackName}-SecurityGroupAlb'
+
+  SecurityGroupRedis:
+    Value: !Ref SecurityGroupRedis
+    Export:
+      Name: !Sub '${StackName}-SecurityGroupRedis'
+
+  SecurityGroupPostgres:
+    Value: !Ref SecurityGroupPostgres
+    Export:
+      Name: !Sub '${StackName}-SecurityGroupPostgres'
+
+  SecurityGroupEcsServiceMastodon:
+    Value: !Ref SecurityGroupEcsServiceMastodon
+    Export:
+      Name: !Sub '${StackName}-SecurityGroupEcsServiceMastodon'
